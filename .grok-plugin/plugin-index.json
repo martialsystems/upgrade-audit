@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "plugins": {
+    "upgrade-audit": {
+      "components": {
+        "skills": [
+          {
+            "name": "upgrade-audit",
+            "description": "Inventory GitHub repos and audit shipped logic when a new Grok generation ships."
+          }
+        ]
+      }
+    }
+  }
+}
