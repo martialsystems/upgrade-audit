@@ -1,0 +1,22 @@
+{
+  "name": "Martial Systems",
+  "description": "Plugins from Martial Systems LLC",
+  "owner": {
+    "name": "Martial Systems LLC",
+    "email": "martialsys@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "upgrade-audit",
+      "version": "1.1.0",
+      "description": "Inventory your GitHub repos, review shipped logic when a new Grok generation ships, write a PDF, then audit, fix, or open a PR.",
+      "category": "productivity",
+      "homepage": "https://martialgames.net/tools/upgrade-audit/",
+      "source": { "type": "local", "path": "." },
+      "author": { "name": "Martial Systems LLC", "email": "martialsys@gmail.com" },
+      "tags": ["upgrade-audit", "martial-systems"],
+      "keywords": ["upgrade-audit", "martial systems", "martialsystems"],
+      "domains": ["martialgames.net", "martialsys.net"]
+    }
+  ]
+}
