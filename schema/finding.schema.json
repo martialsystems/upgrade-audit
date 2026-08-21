@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Upgrade-audit finding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repo",
+    "commit",
+    "file",
+    "line",
+    "error_class",
+    "claim",
+    "evidence",
+    "proposed_fix",
+    "severity",
+    "status"
+  ],
+  "properties": {
+    "repo": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 1
+    },
+    "file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "error_class": {
+      "type": "string",
+      "enum": [
+        "inverted_or_broken_invariant",
+        "silent_fallback",
+        "dead_or_duplicate_path",
+        "law_vs_code_drift",
+        "look_ahead_leakage",
+        "numeric_money_time",
+        "state_cache_persistence",
+        "safety_privacy_claim",
+        "test_lie",
+        "stale_model_era_assumption"
+      ]
+    },
+    "claim": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence": {
+      "type": "string",
+      "minLength": 1
+    },
+    "proposed_fix": {
+      "type": "string",
+      "minLength": 1
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "critical",
+        "major",
+        "minor"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "rejected",
+        "unverified"
+      ]
+    },
+    "verifier_evidence": {
+      "type": "string"
+    }
+  },
+  "if": {
+    "properties": {
+      "status": {
+        "const": "confirmed"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "verifier_evidence"
+    ]
+  }
+}

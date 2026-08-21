@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 Martial Systems LLC. All rights reserved.
+"""Run the pack without a site-packages install (works on locked system Pythons)."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from upgrade_audit.cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

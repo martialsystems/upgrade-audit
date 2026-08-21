@@ -18,7 +18,7 @@
 | **License** | Proprietary personal use: [LICENSE](LICENSE), [Terms](docs/TERMS_OF_USE.md) |
 | **Privacy** | We do not receive your repos. [Privacy](docs/PRIVACY.md) |
 
-This GitHub repository is a **landing page and marketplace index**. Source is not published.
+This GitHub repository is the **plugin and the Python runner** (inspectable at the pinned commit). The operator catalog of Martial Systems products is not published.
 
 ## Install the Grok plugin
 
@@ -27,18 +27,21 @@ grok plugin marketplace add martialsystems/upgrade-audit
 grok plugin install upgrade-audit --trust
 ```
 
-Then download **`upgrade-audit-1.1.0.zip`** from [Releases](https://github.com/martialsystems/upgrade-audit/releases). Do not use “Source code (zip)” and do not use Code → Download ZIP. Those archives are this landing page only.
+The installed plugin directory contains `bin/upgrade-audit`, `src/upgrade_audit/`, and `catalog/`. That directory is ROOT. You can also clone this repository and run from the checkout:
 
 ```bash
-unzip upgrade-audit-1.1.0.zip
-cd upgrade-audit-1.1.0
+git clone https://github.com/martialsystems/upgrade-audit
+cd upgrade-audit
+python3 -m pip install -r requirements.txt
 chmod +x bin/upgrade-audit
 export PATH="$PWD/bin:$PATH"
 upgrade-audit configure --mode audit --kill none   # or fix|pr and stall
 upgrade-audit doctor
 ```
 
-Need Python 3.9+, `git`, and `gh auth login` (`repo` scope). `doctor` fails if the runner zip is missing (`bin/upgrade-audit` not on PATH).
+Need Python 3.9+, `git`, and `gh auth login` (`repo` scope). `doctor` fails closed if `bin/upgrade-audit` or `catalog/repos.yaml` is missing.
+
+A versioned zip on [Releases](https://github.com/martialsystems/upgrade-audit/releases) is an optional snapshot of this same tree.
 
 ## What you choose
 
@@ -57,7 +60,7 @@ Need Python 3.9+, `git`, and `gh auth login` (`repo` scope). `doctor` fails if t
 
 ## Network and data
 
-- The plugin is a skill. The runner is the Release zip. Both stay on your machine.
+- The plugin and the runner stay on your machine. They ship in this git tree.
 - `gh` talks to GitHub as the logged-in user (repo list, clone, optional PR create).
 - `git` talks to remotes you already use.
 - Martial Systems does not receive your repos, tokens, or PDFs. There is no telemetry endpoint.
@@ -69,4 +72,4 @@ Need Python 3.9+, `git`, and `gh auth login` (`repo` scope). `doctor` fails if t
 
 ## What this repo is not
 
-It is not the runner source. If a zip has no `bin/upgrade-audit`, you downloaded the landing archive.
+It is not the Martial Systems operator catalog. If a checkout has no `bin/upgrade-audit`, it is not this tree.

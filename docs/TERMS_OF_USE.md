@@ -3,14 +3,14 @@
 **Upgrade Audit** (the “Product”)
 
 **Effective date:** August 17, 2026
-**Last updated:** August 17, 2026
+**Last updated:** August 21, 2026
 **Developer:** Martial Systems LLC (“Provider,” “we,” “us”)
 **Contact:** martialsys@gmail.com
 **Website:** https://martialgames.net/tools/upgrade-audit/
 
 ### 1. Agreement
 
-By installing the Grok plugin, downloading a GitHub Release zip, or using the Product, you agree to these Terms. If you do not agree, do not install or use it.
+By installing the Grok plugin, cloning the public git tree, downloading a GitHub Release zip, or using the Product, you agree to these Terms. If you do not agree, do not install or use it.
 
 ### 2. Description
 
@@ -25,11 +25,11 @@ Subject to these Terms, Provider grants you a personal, revocable, non-exclusive
 You may not:
 
 - Redistribute, sell, lease, or sublicense the Product
-- Publish the unpublished source
+- Relicense the Product as open source, or publish it as if it were
 - Use the Product to violate any law or third-party right
 - Misrepresent the Product as an xAI or Grok official plugin
 
-Source is not published. Use the Release zip asset, not GitHub’s “Source code (zip).”
+The Python runner is in the public git tree so marketplace reviewers and users can inspect the pinned commit. The operator catalog of Martial Systems products is not published. Inspectable is not a grant of extra rights.
 
 ### 4. Your repositories
 

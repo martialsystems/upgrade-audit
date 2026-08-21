@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Upgrade-audit run manifest",
+  "type": "object",
+  "required": [
+    "from_version",
+    "to_version",
+    "date",
+    "status"
+  ],
+  "properties": {
+    "from_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "to_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "date": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "complete",
+        "halted"
+      ]
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "halt_reason": {
+      "type": "string"
+    }
+  }
+}

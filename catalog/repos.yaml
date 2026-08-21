@@ -1,0 +1,8 @@
+# Generic catalog shipped in the public git tree and Release zip.
+# inventory --adopt fills in_scope from the logged-in gh user's owned repos.
+# Operator Martial Systems catalog stays in catalog/repos.yaml (private).
+
+owner: ""
+clone_root: ~
+in_scope: []
+excluded: []

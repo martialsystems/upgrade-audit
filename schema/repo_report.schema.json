@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Upgrade-audit per-repo report",
+  "type": "object",
+  "required": [
+    "repo",
+    "github",
+    "local_path",
+    "audited_ref",
+    "audited_sha",
+    "dirty",
+    "files_read",
+    "findings"
+  ],
+  "properties": {
+    "repo": {
+      "type": "string",
+      "minLength": 1
+    },
+    "github": {
+      "type": "string",
+      "minLength": 1
+    },
+    "local_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "audited_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "audited_sha": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dirty": {
+      "type": "boolean"
+    },
+    "dirty_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sync_note": {
+      "type": "string"
+    },
+    "files_read": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "finding.schema.json"
+      }
+    },
+    "auditor_notes": {
+      "type": "string"
+    }
+  }
+}

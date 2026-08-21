@@ -13,15 +13,16 @@ description: >
 
 Do not copy a repo list into this skill.
 
-Resolve the **runner** root (call this ROOT), not only the plugin folder. In order:
+Resolve the **runner** root (call this ROOT). In order:
 
 1. `$UPGRADE_AUDIT_ROOT` if set
 2. `upgrade-audit print-root` if `upgrade-audit` is on PATH
 3. `$GROK_HOME/upgrade-audit.root` (one line)
-4. A directory the user unpacked from the **Release zip** that contains `bin/upgrade-audit` and `catalog/`
-5. If none of those exist: stop. Tell them to download `upgrade-audit-<ver>.zip` from https://github.com/martialsystems/upgrade-audit/releases (the asset, not Source code zip) and run `upgrade-audit install-skill` from that unpack. Product page: https://martialgames.net/tools/upgrade-audit/
+4. `$GROK_PLUGIN_ROOT` if it contains `bin/upgrade-audit` and `catalog/repos.yaml`
+5. Two directories above this `SKILL.md` if that tree contains `bin/upgrade-audit` and `catalog/repos.yaml` (the helper `upgrade-audit` next to this file lives there)
+6. If none of those exist: stop. Tell them to `grok plugin install upgrade-audit --trust` or `git clone https://github.com/martialsystems/upgrade-audit`. The pinned git tree includes the Python runner. Product page: https://martialgames.net/tools/upgrade-audit/
 
-`GROK_PLUGIN_ROOT` is the installed plugin (this skill). It is **not** the runner. Do not treat it as ROOT unless it also contains `bin/upgrade-audit`.
+`GROK_PLUGIN_ROOT` is the installed plugin. After 1.2.0 it **is** the runner when it contains `bin/upgrade-audit`.
 
 Read `$ROOT/protocol/AUDIT.md` and `$ROOT/catalog/repos.yaml` before spawning anyone.
 
@@ -29,12 +30,12 @@ If `upgrade-audit doctor` has not been run on this device, run it first. Any `FA
 
 ## Device policy (required)
 
-Anyone who installs chooses **both**. Per device, not baked into the zip.
+Anyone who installs chooses **both**. Per device, not baked into the tree.
 
 Resolve MODE: `--mode`, then `$UPGRADE_AUDIT_MODE`, then `upgrade-audit configure`. If unset, ask and save.
 
 | Mode | After the PDF |
-|------|----------------|
+|------|---------------|
 | `audit` | Stop. No product edits. |
 | `fix` | Apply confirmed findings on a branch. No PR. No merge. |
 | `pr` | Same as fix, then open a GitHub PR. No merge. |
@@ -59,7 +60,7 @@ The **audit walk** is always read-only. Never `reset --hard`, never merge, never
 
 ## Procedure
 
-Work from ROOT. Command: `upgrade-audit` on PATH, else `$ROOT/bin/upgrade-audit`, else `PYTHONPATH=$ROOT/src python3 -m upgrade_audit`.
+Work from ROOT. Command: `upgrade-audit` on PATH, else `$ROOT/bin/upgrade-audit`, else this skill directory's `upgrade-audit` helper, else `PYTHONPATH=$ROOT/src python3 -m upgrade_audit`.
 
 1. **Inventory first**
 
