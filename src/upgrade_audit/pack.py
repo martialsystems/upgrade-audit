@@ -98,6 +98,9 @@ def doctor() -> Tuple[int, List[str]]:
     if not protocol_path(root).is_file():
         lines.append("FAIL protocol missing: {0}".format(protocol_path(root)))
         failed = True
+    self_audit_proto = root / "protocol" / "SELF_AUDIT.md"
+    if self_audit_proto.is_file():
+        lines.append("ok self-audit protocol (operator gate)")
     try:
         cat = default_catalog()
         lines.append("ok catalog {0} in-scope={1}".format(cat.owner, len(cat.in_scope)))

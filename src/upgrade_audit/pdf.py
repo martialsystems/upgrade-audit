@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Martial Systems LLC. All rights reserved.
-"""Fleet PDF builder. PhD register. No decorative em dashes."""
+"""Fleet PDF builder and per-repo export. PhD register. No decorative em dashes."""
 
 from __future__ import annotations
 
@@ -518,6 +518,144 @@ def build_pdf(
         topMargin=0.7 * inch,
         bottomMargin=0.7 * inch,
         title="Model-upgrade logic audit: Grok {0} to {1}".format(from_ver, to_ver),
+        author="Martial Systems LLC",
+    )
+    doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
+    return dest
+
+
+def safe_repo_filename(repo_id: str) -> str:
+    out = []
+    for ch in str(repo_id):
+        if ch.isalnum() or ch in "._-":
+            out.append(ch)
+        else:
+            out.append("_")
+    return "".join(out) or "repo"
+
+
+def build_repo_pdf(report: Mapping[str, Any], dest: Path, *, day: Optional[str] = None) -> Path:
+    """One-repo export of every confirmed finding (critical, major, and minor). No 8-item cap."""
+    styles = _styles()
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    day = day or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    repo = str(report.get("repo") or "repo")
+    confirmed = confirmed_findings(report)
+    counts = count_by_severity(confirmed)
+    unverified = [
+        f for f in (report.get("findings") or []) if isinstance(f, dict) and f.get("status") == "unverified"
+    ]
+
+    story: List[Any] = []
+    story.append(
+        Paragraph("Upgrade-audit findings: {0} ({1})".format(_esc(repo), _esc(day)), styles["title"])
+    )
+    story.append(
+        Paragraph(
+            "Martial Systems LLC. All confirmed findings for this repository. "
+            "Critical, major, and minor. No eight-item cap. Generated {0}.".format(_esc(generated)),
+            styles["meta"],
+        )
+    )
+    story.append(
+        Paragraph(
+            "GitHub {0}. SHA {1}. Dirty: {2}.".format(
+                _esc(report.get("github") or ""),
+                _esc(report.get("audited_sha") or ""),
+                "yes" if report.get("dirty") else "no",
+            ),
+            styles["body"],
+        )
+    )
+    story.append(
+        Paragraph(
+            "Confirmed counts: critical {0}, major {1}, minor {2} (total {3}).".format(
+                counts["critical"], counts["major"], counts["minor"], len(confirmed)
+            ),
+            styles["body"],
+        )
+    )
+
+    sev_num = {"critical": "1", "major": "2", "minor": "3"}
+    if not confirmed:
+        story.append(Paragraph("1. Confirmed findings ({0})".format(_esc(day)), styles["h1"]))
+        story.append(
+            Paragraph(
+                "This report has no confirmed findings. Rejected items are omitted. "
+                "Unverified items, if any, are listed below.",
+                styles["body"],
+            )
+        )
+    else:
+        for sev in ("critical", "major", "minor"):
+            bucket = [f for f in confirmed if f.get("severity") == sev]
+            if not bucket:
+                continue
+            story.append(
+                Paragraph(
+                    "{0}. {1} ({2})".format(sev_num[sev], sev.capitalize(), _esc(day)),
+                    styles["h1"],
+                )
+            )
+            for i, finding in enumerate(bucket, start=1):
+                story.append(
+                    Paragraph(
+                        "{0}.{1} {2}:{3} ({4})".format(
+                            sev_num[sev],
+                            i,
+                            _esc(finding.get("file")),
+                            _esc(finding.get("line")),
+                            _esc(ERROR_CLASS_TITLES.get(finding.get("error_class"), finding.get("error_class"))),
+                        ),
+                        styles["h2"],
+                    )
+                )
+                story.append(Paragraph(_esc(finding.get("claim")), styles["body"]))
+                story.append(
+                    _bullets(
+                        [
+                            "Evidence: {0}".format(_esc(finding.get("evidence"))),
+                            "Proposed change (not applied): {0}".format(_esc(finding.get("proposed_fix"))),
+                            "Verifier: {0}".format(_esc(finding.get("verifier_evidence") or "(none)")),
+                        ],
+                        styles["bullet"],
+                    )
+                )
+
+    if unverified:
+        story.append(Paragraph("Unverified ({0})".format(_esc(day)), styles["h1"]))
+        story.append(
+            Paragraph(
+                "These were reported but not confirmed. They are listed so a large repo does not hide them. "
+                "They are not in the confirmed counts.",
+                styles["body"],
+            )
+        )
+        story.append(
+            _bullets(
+                [
+                    "[{0}] {1}:{2}: {3}".format(
+                        _esc(f.get("severity")),
+                        _esc(f.get("file")),
+                        _esc(f.get("line")),
+                        _esc(f.get("claim")),
+                    )
+                    for f in unverified
+                ],
+                styles["bullet"],
+            )
+        )
+
+    doc = SimpleDocTemplate(
+        str(dest),
+        pagesize=letter,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch,
+        topMargin=0.7 * inch,
+        bottomMargin=0.7 * inch,
+        title="Upgrade-audit findings: {0}".format(repo),
         author="Martial Systems LLC",
     )
     doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)

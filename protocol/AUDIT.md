@@ -38,7 +38,7 @@ Required: `repo`, `commit`, `file`, `line`, `error_class`, `claim`, `evidence`, 
 - Empty `findings` is valid only when `files_read` names the files you opened.
 - Do not invent issues to fill space.
 - During the audit walk: do not edit product trees.
-- Cap for the PDF body is 8 confirmed findings per repo (highest severity first). You may report more; overflow is titled only.
+- Cap for the fleet PDF body is 8 confirmed findings per repo (highest severity first). You may report more; overflow is titled only. `upgrade-audit repo-pdf` writes every confirmed finding for one repo (critical, major, and minor) with no cap.
 - A finding is PDF-eligible only after a verifier subagent tries to refute it and still finds the evidence. Failed or missing verify: `unverified`.
 
 ## After the PDF (device policy)
@@ -68,9 +68,9 @@ Child **kill** is a per-device choice, same as action mode. Anyone who downloads
 
 On stall kill: auditor: skip record, not clean. verifier: write the draft with findings `unverified`. fix/test: leave the finding open; do not merge.
 
-Cancelled with no output: respawn once, then skip `cancelled`. That is not a stall kill.
+Cancelled or failed with no output: respawn that same role once, then skip `cancelled` or `failed`. A verifier stall is the unverify path. A second cancel is not. An auditor cancel does not spend the verifier's respawn.
 
-Manifest `complete` only when every requested repo has a validated report or a recorded skip (`sync_fail`, `stall`, `cancelled`). A skip is listed in the PDF. It is not an empty-findings clean repo.
+Manifest `complete` only when every requested repo has a validated report or a recorded skip (`sync_fail`, `stall`, `cancelled`, `failed`). A skip is listed in the PDF. It is not an empty-findings clean repo.
 
 ## Verifier
 

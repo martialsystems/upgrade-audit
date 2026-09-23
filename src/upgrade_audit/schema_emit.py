@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from .constants import ERROR_CLASSES, SEVERITIES, STATUSES
+from .constants import BOARD_STATUSES, ERROR_CLASSES, SEVERITIES, STATUSES, SUGGEST_PRESETS
 
 
 def finding_schema() -> dict:
@@ -86,5 +86,37 @@ def run_manifest_schema() -> dict:
             "status": {"type": "string", "enum": ["in_progress", "complete", "halted"]},
             "repos": {"type": "array", "items": {"type": "string"}},
             "halt_reason": {"type": "string"},
+        },
+    }
+
+
+def queue_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Upgrade-audit walk queue",
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["from_version", "to_version", "ids"],
+        "properties": {
+            "from_version": {"type": "string", "minLength": 1},
+            "to_version": {"type": "string", "minLength": 1},
+            "ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+            "reason": {"type": "string"},
+            "updated_at": {"type": "string"},
+        },
+    }
+
+
+def board_row_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Upgrade-audit board repo row",
+        "type": "object",
+        "required": ["id", "status", "queued"],
+        "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "status": {"type": "string", "enum": list(BOARD_STATUSES)},
+            "queued": {"type": "boolean"},
+            "suggest_presets": {"type": "array", "items": {"type": "string", "enum": list(SUGGEST_PRESETS)}},
         },
     }

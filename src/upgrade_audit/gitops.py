@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
@@ -125,15 +126,41 @@ def pull_ff_only(path: Path) -> None:
     run_git(["pull", "--ff-only"], cwd=path)
 
 
+def _sha_matches(existing: str, sha: str) -> bool:
+    if not existing or not sha:
+        return False
+    return existing == sha or existing.startswith(sha) or sha.startswith(existing)
+
+
+def _discard_audit_worktree(repo: Path, dest: Path) -> None:
+    """Remove an audit scratch worktree. Never touches the operator checkout."""
+    parent = worktree_parent().resolve()
+    try:
+        resolved = dest.resolve()
+    except OSError:
+        resolved = dest
+    if resolved != parent and parent not in resolved.parents:
+        raise GitError("refuse to remove {0}: outside the audit worktree dir".format(dest))
+    run_git(["worktree", "remove", "--force", str(dest)], cwd=repo, check=False)
+    if dest.is_dir():
+        shutil.rmtree(dest)
+    elif dest.exists():
+        dest.unlink()
+    run_git(["worktree", "prune"], cwd=repo, check=False)
+
+
 def ensure_detached_worktree(repo: Path, sha: str, repo_id: str) -> Path:
     dest = worktree_parent() / "{0}-{1}".format(repo_id, sha[:12])
     if dest.is_dir() and is_git_repo(dest):
         existing = rev_parse(dest, "HEAD")
-        if existing == sha or existing.startswith(sha) or sha.startswith(existing):
+        if _sha_matches(existing, sha):
             return dest
+        _discard_audit_worktree(repo, dest)
+    elif dest.exists():
+        _discard_audit_worktree(repo, dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        # Different SHA at same path name should not happen (sha is in the name).
-        return dest
     run_git(["worktree", "add", "--detach", str(dest), sha], cwd=repo)
+    checked = rev_parse(dest, "HEAD")
+    if not _sha_matches(checked, sha):
+        raise GitError("worktree HEAD {0} is not {1}".format(checked, sha))
     return dest

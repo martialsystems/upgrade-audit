@@ -43,6 +43,25 @@ STATUSES: Tuple[str, ...] = ("confirmed", "rejected", "unverified")
 
 PDF_CONFIRMED_CAP = 8
 
+BOARD_STATUSES: Tuple[str, ...] = (
+    "never_audited",
+    "in_progress",
+    "skipped",
+    "open",
+    "unverified",
+    "unchecked",
+    "clean",
+)
+
+SUGGEST_PRESETS: Tuple[str, ...] = (
+    "open-critical",
+    "open",
+    "never-audited",
+    "skipped",
+    "unverified",
+    "all-in-scope",
+)
+
 ERROR_CLASS_SET: FrozenSet[str] = frozenset(ERROR_CLASSES)
 SEVERITY_SET: FrozenSet[str] = frozenset(SEVERITIES)
 STATUS_SET: FrozenSet[str] = frozenset(STATUSES)

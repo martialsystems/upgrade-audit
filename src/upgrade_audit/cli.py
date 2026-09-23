@@ -11,14 +11,16 @@ from datetime import date
 from pathlib import Path
 from typing import Optional, Sequence
 
+from .board import grok_command, load_repo_report, project_board, suggest_ids
 from .catalog import Catalog, default_catalog, load_catalog, select_repos, write_catalog
+from .constants import SUGGEST_PRESETS
 from .context import collect_context
 from .findings import ValidationError, validate_or_raise
 from .github import GitHubError, current_login, list_owned_repos
 from .inventory import adopt_new, classify, result_to_dict
 from .ledger import compare_runs, latest_completed_run
 from .pack import doctor, install_skill
-from .paths import catalog_path, package_checkout, repo_root, runs_dir, schema_dir
+from .paths import catalog_path, isolated_tmp, package_checkout, repo_root, runs_dir, schema_dir
 from .policy import (
     KILL_HELP,
     KILLS,
@@ -33,15 +35,35 @@ from .policy import (
     parse_stall_seconds,
     save_policy,
 )
-from .pdf import build_pdf
+from .pdf import build_pdf, build_repo_pdf, safe_repo_filename
+from .send_grok import SendGrokError, launch_send
+from .queue import (
+    QueueError,
+    clear_queue,
+    load_queue,
+    public_payload,
+    queue_path,
+    require_walk,
+    resolve_requested,
+    save_queue,
+    validate_ids,
+)
 from .rundir import allocate_run_dir, pdf_path, read_json, write_json, write_manifest
-from .schema_emit import finding_schema, repo_report_schema, run_manifest_schema
+from .schema_emit import finding_schema, queue_schema, repo_report_schema, run_manifest_schema
 from .sync import results_to_dict, sync_all
 from .walk import load_walk, save_walk, seed_walk, step as walk_step
 
 
 def _add_only(p: argparse.ArgumentParser) -> None:
     p.add_argument("--only", action="append", default=[], help="Restrict to catalog id (repeatable)")
+
+
+def _add_walk(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--walk",
+        default=None,
+        help="Restrict to one catalog walk named in catalog/walks.yaml",
+    )
 
 
 def _add_catalog(p: argparse.ArgumentParser) -> None:
@@ -231,10 +253,18 @@ def cmd_write_schemas(_args: argparse.Namespace) -> int:
         "finding.schema.json": finding_schema(),
         "repo_report.schema.json": repo_report_schema(),
         "run_manifest.schema.json": run_manifest_schema(),
+        "queue.schema.json": queue_schema(),
     }
     for name, payload in mapping.items():
         (dest / name).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(dest / name)
+    try:
+        from .self_audit import available as self_audit_available
+        from .self_audit import write_schema as write_self_audit_schema
+    except ImportError:
+        return 0
+    if self_audit_available():
+        print(write_self_audit_schema(dest))
     return 0
 
 
@@ -252,6 +282,7 @@ def cmd_inventory(args: argparse.Namespace) -> int:
             excluded=list(catalog.excluded),
             source=catalog.source,
             clone_root_raw=catalog.clone_root_raw,
+            walks=catalog.walks,
         )
         print("inventory: using gh login {0} as catalog owner".format(login), file=sys.stderr)
     try:
@@ -271,6 +302,9 @@ def cmd_inventory(args: argparse.Namespace) -> int:
     payload = result_to_dict(result)
     payload["owner"] = catalog.owner
     payload["adopted"] = adopted
+    payload["adopted_walks"] = {
+        rid: catalog.effective_walk(catalog.in_scope_by_id(rid)) for rid in adopted
+    }
     payload["auto_excluded_forks"] = auto_forks
     if args.out:
         write_json(args.out, payload)
@@ -442,29 +476,109 @@ def cmd_pdf(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_send_grok(args: argparse.Namespace) -> int:
+    catalog = load_catalog(args.catalog) if args.catalog else default_catalog()
+    root = repo_root()
+    ids = list(args.only or [])
+    frm = args.from_ver
+    to = args.to_ver
+    if not ids:
+        queued = load_queue(queue_path(root))
+        if queued is None or not queued.get("ids"):
+            print(
+                "send-grok: empty queue; pass --only or Save ids in the console",
+                file=sys.stderr,
+            )
+            return 1
+        ids = list(queued.get("ids") or [])
+        frm = frm or queued.get("from_version")
+        to = to or queued.get("to_version")
+    if not frm or not to:
+        print("send-grok: --from and --to are required", file=sys.stderr)
+        return 1
+    try:
+        ids = validate_ids(catalog, ids)
+        sent = launch_send(from_version=str(frm), to_version=str(to), ids=ids, cwd=root)
+    except (SendGrokError, QueueError) as exc:
+        print("send-grok: {0}".format(exc), file=sys.stderr)
+        return 1
+    print(sent["prompt"])
+    print(sent["script"])
+    return 0
+
+
+def cmd_repo_pdf(args: argparse.Namespace) -> int:
+    catalog = load_catalog(args.catalog) if args.catalog else default_catalog()
+    runs = args.runs_root or runs_dir(repo_root())
+    try:
+        report = load_repo_report(catalog, runs, args.repo)
+    except KeyError as exc:
+        print("repo-pdf: {0}".format(exc), file=sys.stderr)
+        return 1
+    if report is None:
+        print("repo-pdf: no report for {0}".format(args.repo), file=sys.stderr)
+        return 1
+    name = safe_repo_filename(args.repo)
+    dest = args.out or (isolated_tmp() / "upgrade-audit" / "repo-pdfs" / "upgrade-audit-{0}.pdf".format(name))
+    built = build_repo_pdf(report, dest)
+    print(built)
+    return 0
+
+
 def cmd_init_run(args: argparse.Namespace) -> int:
     catalog = load_catalog(args.catalog) if args.catalog else default_catalog()
     day = args.date or date.today().isoformat()
-    path = allocate_run_dir(
-        args.from_ver,
-        args.to_ver,
-        day=day,
-        resume=args.resume,
-    )
-    excluded = [{"github": e.github, "reason": e.reason} for e in catalog.excluded]
-    write_json(path / "excluded.json", excluded)
-    shutil.copy2(catalog_path() if not args.catalog else args.catalog, path / "catalog_snapshot.yaml")
-    repos = catalog.in_scope_ids() if not args.only else list(args.only)
-    write_manifest(
-        path,
-        {
-            "from_version": args.from_ver,
-            "to_version": args.to_ver,
-            "date": day,
-            "status": "in_progress",
-            "repos": repos,
-        },
-    )
+    try:
+        path = allocate_run_dir(
+            args.from_ver,
+            args.to_ver,
+            day=day,
+            resume=args.resume,
+        )
+    except FileNotFoundError as exc:
+        print("init-run: {0}".format(exc), file=sys.stderr)
+        return 1
+    root = repo_root()
+    if args.catalog:
+        catalog_src = args.catalog
+        root = args.catalog.resolve().parents[1] if args.catalog.name == "repos.yaml" else root
+    else:
+        catalog_src = catalog_path()
+    if args.resume:
+        manifest = path / "manifest.json"
+        if not manifest.is_file():
+            print("init-run: resume needs an existing manifest.json", file=sys.stderr)
+            return 1
+        existing = read_json(manifest)
+        repos = list(existing.get("repos") or [])
+        source = "resume"
+    else:
+        try:
+            repos, source = resolve_requested(
+                catalog,
+                only=args.only,
+                walk_all=bool(args.walk_all),
+                walk=getattr(args, "walk", None),
+                root=root,
+            )
+        except QueueError as exc:
+            print("init-run: {0}".format(exc), file=sys.stderr)
+            return 1
+        excluded = [{"github": e.github, "reason": e.reason} for e in catalog.excluded]
+        write_json(path / "excluded.json", excluded)
+        shutil.copy2(catalog_src, path / "catalog_snapshot.yaml")
+        write_manifest(
+            path,
+            {
+                "from_version": args.from_ver,
+                "to_version": args.to_ver,
+                "date": day,
+                "status": "in_progress",
+                "repos": repos,
+                "scope_source": source,
+            },
+        )
+    print("scope={0} n={1}".format(source, len(repos)), file=sys.stderr)
     try:
         pol = load_policy()
         kill = pol.resolved_kill() or "none"
@@ -480,6 +594,171 @@ def cmd_init_run(args: argparse.Namespace) -> int:
         resume=args.resume,
     )
     print(path)
+    return 0
+
+
+def _policy_public() -> dict:
+    try:
+        pol = load_policy()
+    except PolicyError:
+        return {}
+    return {
+        "mode": pol.resolved_mode(),
+        "kill": pol.resolved_kill(),
+        "stall_seconds": pol.stall_seconds,
+    }
+
+
+def cmd_board(args: argparse.Namespace) -> int:
+    catalog = load_catalog(args.catalog) if args.catalog else default_catalog()
+    root = repo_root()
+    runs = args.runs_root or runs_dir(root)
+    try:
+        queued = load_queue(queue_path(root))
+    except QueueError as exc:
+        print("board: {0}".format(exc), file=sys.stderr)
+        return 1
+    payload = project_board(
+        catalog,
+        runs_root=runs,
+        queue=queued,
+        policy=_policy_public(),
+    )
+    payload["command"] = grok_command(
+        payload.get("from_version"),
+        payload.get("to_version"),
+        (queued or {}).get("ids") or [],
+    )
+    text = json.dumps(payload, indent=2, sort_keys=True)
+    if args.out and str(args.out) != "-":
+        write_json(args.out, json.loads(text))
+        print(args.out)
+    else:
+        print(text)
+    return 0
+
+
+def cmd_queue(args: argparse.Namespace) -> int:
+    catalog = load_catalog(args.catalog) if args.catalog else default_catalog()
+    root = repo_root()
+    path = queue_path(root)
+    actions = [bool(args.clear), bool(args.suggest), args.set_ids is not None]
+    if sum(1 for x in actions if x) > 1:
+        print("queue: pass only one of --set, --clear, --suggest", file=sys.stderr)
+        return 1
+    if args.clear:
+        clear_queue(path)
+        print(json.dumps({"present": False, "cleared": True}, indent=2))
+        return 0
+    walk = (getattr(args, "walk", None) or "").strip() or None
+    if args.suggest:
+        runs = args.runs_root or runs_dir(root)
+        try:
+            queued = load_queue(path)
+        except QueueError as exc:
+            print("queue: {0}".format(exc), file=sys.stderr)
+            return 1
+        board = project_board(catalog, runs_root=runs, queue=queued, policy=_policy_public())
+        if catalog.walks is not None:
+            name = walk or catalog.walks.default
+            if name not in catalog.walks.by_id:
+                print(
+                    "queue: unknown --walk {0} (have {1})".format(name, ", ".join(catalog.walks.order)),
+                    file=sys.stderr,
+                )
+                return 1
+            board = dict(board)
+            board["repos"] = [
+                row
+                for row in board["repos"]
+                if catalog.effective_walk(catalog.in_scope_by_id(row["id"])) == name
+            ]
+        elif walk:
+            print("queue: this catalog has no walks.yaml; omit --walk", file=sys.stderr)
+            return 1
+        try:
+            ids = suggest_ids(board, args.suggest)
+        except ValueError as exc:
+            print("queue: {0}".format(exc), file=sys.stderr)
+            return 1
+        frm = args.from_ver or (queued or {}).get("from_version") or board.get("from_version")
+        to = args.to_ver or (queued or {}).get("to_version") or board.get("to_version")
+        try:
+            payload = save_queue(
+                path,
+                ids,
+                from_version=str(frm or ""),
+                to_version=str(to or ""),
+                reason=args.suggest,
+                catalog=catalog,
+            )
+        except QueueError as exc:
+            print("queue: {0}".format(exc), file=sys.stderr)
+            return 1
+        print(json.dumps({"present": True, **payload}, indent=2, sort_keys=True))
+        return 0
+    if args.set_ids is not None:
+        frm = args.from_ver
+        to = args.to_ver
+        if not frm or not to:
+            existing = None
+            try:
+                existing = load_queue(path)
+            except QueueError:
+                existing = None
+            board = None
+            if not frm or not to:
+                runs = args.runs_root or runs_dir(root)
+                board = project_board(catalog, runs_root=runs, queue=existing)
+            frm = frm or (existing or {}).get("from_version") or (board or {}).get("from_version")
+            to = to or (existing or {}).get("to_version") or (board or {}).get("to_version")
+        try:
+            set_ids = list(args.set_ids)
+            if walk:
+                set_ids = require_walk(catalog, validate_ids(catalog, set_ids), walk)
+            payload = save_queue(
+                path,
+                set_ids,
+                from_version=str(frm or ""),
+                to_version=str(to or ""),
+                reason=args.reason or "",
+                catalog=catalog,
+            )
+        except QueueError as exc:
+            print("queue: {0}".format(exc), file=sys.stderr)
+            return 1
+        print(json.dumps({"present": True, **payload}, indent=2, sort_keys=True))
+        return 0
+    try:
+        payload = public_payload(path)
+    except QueueError as exc:
+        print("queue: {0}".format(exc), file=sys.stderr)
+        return 1
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0 if payload.get("present") else 2
+
+
+def cmd_console(args: argparse.Namespace) -> int:
+    root = repo_root()
+    app_file = root / "console" / "app.py"
+    if not app_file.is_file():
+        print(
+            "console: this tree has no console/ (operator checkout only; not in the public plugin zip)",
+            file=sys.stderr,
+        )
+        return 1
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from console.app import serve
+    except ImportError as exc:
+        print("console: {0}".format(exc), file=sys.stderr)
+        print("console: pip install -e '.[console]'", file=sys.stderr)
+        return 1
+    host = args.host
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        print("console: warning: bind {0} is not loopback".format(host), file=sys.stderr)
+    serve(host=host, port=args.port)
     return 0
 
 
@@ -527,11 +806,41 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("init-run")
     _add_catalog(s)
     _add_only(s)
+    _add_walk(s)
     s.add_argument("--from", dest="from_ver", required=True)
     s.add_argument("--to", dest="to_ver", required=True)
     s.add_argument("--date", default=None)
     s.add_argument("--resume", action="store_true")
+    s.add_argument(
+        "--all",
+        dest="walk_all",
+        action="store_true",
+        help="Ignore queue.json and walk the default catalog walk (all in-scope ids if walks.yaml is absent)",
+    )
     s.set_defaults(func=cmd_init_run)
+
+    s = sub.add_parser("board", help="JSON board over catalog plus last-run findings (no walk)")
+    _add_catalog(s)
+    s.add_argument("--runs-root", type=Path, default=None)
+    s.add_argument("--out", type=Path, default=None)
+    s.set_defaults(func=cmd_board)
+
+    s = sub.add_parser("queue", help="Print or write the next-walk queue")
+    _add_catalog(s)
+    _add_walk(s)
+    s.add_argument("--runs-root", type=Path, default=None)
+    s.add_argument("--set", nargs="*", dest="set_ids", default=None, help="Replace queue ids")
+    s.add_argument("--clear", action="store_true", help="Delete queue.json (catalog default returns)")
+    s.add_argument("--suggest", choices=list(SUGGEST_PRESETS), default=None)
+    s.add_argument("--from", dest="from_ver", default=None)
+    s.add_argument("--to", dest="to_ver", default=None)
+    s.add_argument("--reason", default="")
+    s.set_defaults(func=cmd_queue)
+
+    s = sub.add_parser("console", help="Localhost decision board (operator tree; not the marketplace zip)")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=8765)
+    s.set_defaults(func=cmd_console)
 
     s = sub.add_parser("inventory")
     _add_catalog(s)
@@ -575,6 +884,26 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--out", type=Path, default=None)
     s.set_defaults(func=cmd_pdf)
 
+    s = sub.add_parser(
+        "send-grok",
+        help="Save-or-use the queue and open a new Grok TUI with that walk",
+    )
+    _add_catalog(s)
+    _add_only(s)
+    s.add_argument("--from", dest="from_ver", default=None)
+    s.add_argument("--to", dest="to_ver", default=None)
+    s.set_defaults(func=cmd_send_grok)
+
+    s = sub.add_parser(
+        "repo-pdf",
+        help="Write a PDF of every confirmed finding for one catalog id (critical, major, minor)",
+    )
+    _add_catalog(s)
+    s.add_argument("--repo", required=True)
+    s.add_argument("--runs-root", type=Path, default=None)
+    s.add_argument("--out", type=Path, default=None)
+    s.set_defaults(func=cmd_repo_pdf)
+
     s = sub.add_parser("walk-step", help="Non-blocking walk scheduler: snapshot in, next actions out")
     _add_run(s)
     s.add_argument(
@@ -591,7 +920,19 @@ def build_parser() -> argparse.ArgumentParser:
     _add_run(s)
     s.set_defaults(func=cmd_walk_status)
 
+    _maybe_add_self_audit(sub)
     return p
+
+
+def _maybe_add_self_audit(sub: argparse._SubParsersAction) -> None:
+    """Operator-only. Missing protocol (public plugin tree) omits the command."""
+    try:
+        from .self_audit import add_cli, available
+    except ImportError:
+        return
+    if not available():
+        return
+    add_cli(sub)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

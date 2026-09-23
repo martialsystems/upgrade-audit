@@ -66,6 +66,8 @@ A versioned zip on [Releases](https://github.com/martialsystems/upgrade-audit/re
 - Martial Systems does not receive your repos, tokens, or PDFs. There is no telemetry endpoint.
 - Device policy is a local JSON file under your Grok home directory.
 
+`--only <id>` (repeatable) restricts a run. If `queue.json` exists under ROOT, `init-run` uses those ids unless you pass `--only` or `--all`. A missing file still walks the whole in-scope catalog.
+
 ## New repositories
 
 `upgrade-audit inventory --adopt` adds each new owned non-fork under your `gh` login. Forks are auto-excluded. Move a row to `excluded` if it is not a product.

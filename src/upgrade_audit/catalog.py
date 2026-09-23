@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Sequence
 import yaml
 
 from .paths import catalog_path, default_clone_root, expand_local, repo_root
+from .walks import WalksConfig, WalksError, load_walks_beside
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class InScopeRepo:
     notes: str = ""
     audit_remote: str = "origin"
     clone_root: str = ""
+    walk: str = ""
 
     @property
     def owner(self) -> str:
@@ -53,6 +55,7 @@ class Catalog:
     excluded: List[ExcludedRepo]
     source: Path
     clone_root_raw: str = "~"
+    walks: Optional[WalksConfig] = None
 
     def in_scope_by_id(self, repo_id: str) -> InScopeRepo:
         for item in self.in_scope:
@@ -81,6 +84,41 @@ class Catalog:
             out[item.name] = "excluded"
         return out
 
+    def effective_walk(self, item: InScopeRepo) -> str:
+        if item.walk:
+            return item.walk
+        if self.walks is not None:
+            return self.walks.default
+        return ""
+
+    def ids_for_walk(self, walk_id: Optional[str] = None) -> List[str]:
+        """Ids in one walk. No walks.yaml: every in-scope id (ignore walk_id unless set)."""
+        if self.walks is None:
+            if walk_id:
+                raise WalksError("this catalog has no walks.yaml; omit --walk")
+            return self.in_scope_ids()
+        name = (walk_id or self.walks.default).strip()
+        if name not in self.walks.by_id:
+            raise WalksError(
+                "unknown walk {0!r} (have {1})".format(name, ", ".join(self.walks.order))
+            )
+        return [item.id for item in self.in_scope if self.effective_walk(item) == name]
+
+    def walk_of_ids(self, ids: Sequence[str]) -> Optional[str]:
+        """Single walk covering ids, or None if empty. Mixed ids: WalksError."""
+        found: List[str] = []
+        for rid in ids:
+            name = self.effective_walk(self.in_scope_by_id(rid))
+            if name and name not in found:
+                found.append(name)
+        if len(found) > 1:
+            raise WalksError(
+                "mixed walks in one run: {0}. Split into separate /upgrade-audit runs.".format(
+                    ", ".join(found)
+                )
+            )
+        return found[0] if found else None
+
 
 def load_catalog(path: Optional[Path] = None) -> Catalog:
     src = path or catalog_path()
@@ -101,6 +139,7 @@ def load_catalog(path: Optional[Path] = None) -> Catalog:
             notes=row.get("notes") or "",
             audit_remote=row.get("audit_remote") or "origin",
             clone_root=str(Path(os.path.expanduser(str(clone_root))).resolve()),
+            walk=str(row.get("walk") or "").strip(),
         )
         if item.id in seen_ids:
             raise ValueError("duplicate in-scope id: {0}".format(item.id))
@@ -116,12 +155,26 @@ def load_catalog(path: Optional[Path] = None) -> Catalog:
             raise ValueError("github listed twice: {0}".format(item.github))
         seen_github.add(item.github)
         excluded.append(item)
+    try:
+        walks = load_walks_beside(src)
+    except WalksError as exc:
+        raise ValueError(str(exc)) from exc
+    if walks is not None:
+        known_walks = set(walks.by_id)
+        for item in in_scope:
+            if item.walk and item.walk not in known_walks:
+                raise ValueError(
+                    "unknown walk {0!r} on {1} (have {2})".format(
+                        item.walk, item.id, ", ".join(walks.order)
+                    )
+                )
     return Catalog(
         owner=owner,
         in_scope=in_scope,
         excluded=excluded,
         source=src,
         clone_root_raw=str(clone_root_raw),
+        walks=walks,
     )
 
 
@@ -144,14 +197,17 @@ _CATALOG_HEADER = """\
 # Copyright (c) 2026 Martial Systems LLC. All rights reserved.
 # Fleet scope. `upgrade-audit inventory --adopt` appends new owned
 # non-forks. Move a row to excluded (with a reason) if it is not a product.
+# Optional walk: family from catalog/walks.yaml when that file exists.
 
 """
 
 
-def _scope_row(item: InScopeRepo) -> dict:
+def _scope_row(item: InScopeRepo, default_walk: str = "") -> dict:
     row = {"id": item.id, "github": item.github, "local": item.local}
     if item.audit_remote and item.audit_remote != "origin":
         row["audit_remote"] = item.audit_remote
+    if item.walk and item.walk != default_walk:
+        row["walk"] = item.walk
     if item.notes:
         row["notes"] = item.notes
     return row
@@ -159,10 +215,11 @@ def _scope_row(item: InScopeRepo) -> dict:
 
 def write_catalog(catalog: Catalog, path: Optional[Path] = None) -> Path:
     dest = path or catalog.source
+    default_walk = catalog.walks.default if catalog.walks is not None else ""
     payload = {
         "owner": catalog.owner,
         "clone_root": catalog.clone_root_raw or "~",
-        "in_scope": [_scope_row(item) for item in catalog.in_scope],
+        "in_scope": [_scope_row(item, default_walk) for item in catalog.in_scope],
         "excluded": [{"github": item.github, "reason": item.reason} for item in catalog.excluded],
     }
     body = yaml.safe_dump(payload, sort_keys=False, default_flow_style=False, allow_unicode=True)
@@ -170,7 +227,14 @@ def write_catalog(catalog: Catalog, path: Optional[Path] = None) -> Path:
     return dest
 
 
-def draft_in_scope(owner: str, repo_name: str, *, clone_root: str = "", notes: str = "") -> InScopeRepo:
+def draft_in_scope(
+    owner: str,
+    repo_name: str,
+    *,
+    clone_root: str = "",
+    notes: str = "",
+    walk: str = "",
+) -> InScopeRepo:
     """Default catalog row for a newly seen owned repo."""
     audit_remote = "origin"
     folder = repo_name
@@ -184,6 +248,7 @@ def draft_in_scope(owner: str, repo_name: str, *, clone_root: str = "", notes: s
         notes=notes,
         audit_remote=audit_remote,
         clone_root=clone_root,
+        walk=walk,
     )
 
 
@@ -212,4 +277,5 @@ def with_added(
         excluded=extra_ex,
         source=catalog.source,
         clone_root_raw=catalog.clone_root_raw,
+        walks=catalog.walks,
     )

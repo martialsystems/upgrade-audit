@@ -19,7 +19,7 @@ WALK_NAME = "walk.json"
 MAX_AUDITORS = 4
 MAX_VERIFIERS = 4
 ROLES = ("auditor", "verifier", "fix")
-SKIP_REASONS = ("sync_fail", "stall", "cancelled")
+SKIP_REASONS = ("sync_fail", "stall", "cancelled", "failed")
 AGENT_STATUSES = ("running", "completed", "failed", "cancelled")
 
 
@@ -62,6 +62,7 @@ def empty_walk(
         "done": [],
         "skipped": [],
         "pending_verify": [],
+        "pending_fix": [],
         "respawned": [],
         "max_auditors": int(max_auditors),
         "max_verifiers": int(max_verifiers),
@@ -115,6 +116,9 @@ def reconcile_with_reports(state: Dict[str, Any], run_dir: Path) -> Dict[str, An
     state["pending_verify"] = [
         r for r in (state.get("pending_verify") or []) if r not in accounted
     ]
+    state["pending_fix"] = [
+        r for r in (state.get("pending_fix") or []) if r not in accounted
+    ]
     return state
 
 
@@ -160,11 +164,70 @@ def _accounted(state: Mapping[str, Any]) -> set:
 
 
 def _progress_token(entry: Mapping[str, Any]) -> str:
-    return "{0}|{1}|{2}".format(
+    output = entry.get("output") or ""
+    if not isinstance(output, str):
+        output = str(output)
+    # Length plus the tail. A log that only grows past a stable prefix is
+    # still progress, so stall kill does not treat it as silence.
+    tail = output[-120:] if len(output) > 120 else output
+    return "{0}|{1}|{2}|{3}".format(
         entry.get("status") or "",
         entry.get("progress") if entry.get("progress") is not None else "",
-        (entry.get("output") or "")[:120],
+        len(output),
+        tail,
     )
+
+
+def _respawn_key(repo: str, role: str) -> str:
+    return "{0}|{1}".format(repo, role)
+
+
+def _role_respawned(state: Mapping[str, Any], repo: str, role: str) -> bool:
+    return _respawn_key(repo, role) in (state.get("respawned") or [])
+
+
+def _mark_respawned(state: Dict[str, Any], repo: str, role: str) -> None:
+    key = _respawn_key(repo, role)
+    bag = state.setdefault("respawned", [])
+    if key not in bag:
+        bag.append(key)
+
+
+def _terminal_skip_reason(status: str) -> str:
+    if status == "failed":
+        return "failed"
+    return "cancelled"
+
+
+def _close_fix(state: Dict[str, Any], repo: str, reason: str, agent_id: Optional[str]) -> None:
+    """Stop retrying a fix without relabeling a finished audit as skipped."""
+    closed = state.setdefault("fix_skipped", [])
+    if not any(isinstance(row, dict) and row.get("repo") == repo for row in closed):
+        closed.append({"repo": repo, "reason": reason, "agent_id": agent_id})
+    state["pending_fix"] = [r for r in (state.get("pending_fix") or []) if r != repo]
+    state["in_flight"] = [
+        row
+        for row in (state.get("in_flight") or [])
+        if not (row.get("repo") == repo and row.get("role") == "fix")
+    ]
+
+
+def _requeue_role(state: Dict[str, Any], repo: str, role: str) -> None:
+    if role == "fix":
+        pending = state.setdefault("pending_fix", [])
+        if repo not in pending:
+            pending.insert(0, repo)
+        return
+    if repo in _accounted(state):
+        return
+    if role == "auditor":
+        queue = state.setdefault("queue", [])
+        if repo not in queue:
+            queue.insert(0, repo)
+    elif role == "verifier":
+        pending = state.setdefault("pending_verify", [])
+        if repo not in pending:
+            pending.insert(0, repo)
 
 
 def _skip(state: Dict[str, Any], repo: str, reason: str, agent_id: Optional[str] = None) -> None:
@@ -177,6 +240,7 @@ def _skip(state: Dict[str, Any], repo: str, reason: str, agent_id: Optional[str]
     )
     state["queue"] = [r for r in (state.get("queue") or []) if r != repo]
     state["pending_verify"] = [r for r in (state.get("pending_verify") or []) if r != repo]
+    state["pending_fix"] = [r for r in (state.get("pending_fix") or []) if r != repo]
     state["in_flight"] = [row for row in (state.get("in_flight") or []) if row.get("repo") != repo]
 
 
@@ -310,24 +374,16 @@ def step(
 
         if status in ("failed", "cancelled"):
             _remove_flight(state, str(agent_id))
-            already = repo in (state.get("respawned") or [])
-            if already:
-                if role == "verifier":
-                    unverify.append({"repo": repo, "reason": "cancelled"})
-                    if repo not in (state.get("done") or []):
-                        state.setdefault("done", []).append(repo)
-                    validate.append("repos/{0}.json".format(repo))
+            reason = _terminal_skip_reason(status)
+            if _role_respawned(state, repo, role):
+                # Second miss of this role is a skip. Unverify stays on stall kill.
+                if role == "fix" and repo in (state.get("done") or []):
+                    _close_fix(state, repo, reason, str(agent_id))
                 else:
-                    _skip(state, repo, "cancelled", str(agent_id))
+                    _skip(state, repo, reason, str(agent_id))
             else:
-                state.setdefault("respawned", []).append(repo)
-                # Put back for a single respawn of the same role.
-                if role == "auditor":
-                    if repo not in (state.get("queue") or []) and repo not in _accounted(state):
-                        state.setdefault("queue", []).insert(0, repo)
-                elif role == "verifier":
-                    if repo not in (state.get("pending_verify") or []) and repo not in _accounted(state):
-                        state.setdefault("pending_verify", []).insert(0, repo)
+                _mark_respawned(state, repo, role)
+                _requeue_role(state, repo, role)
             continue
 
         if status == "running" and kill == "stall":
@@ -374,12 +430,30 @@ def step(
             continue
         spawn.append(_reserve(state, repo, "auditor", now_ts))
 
+    while _count_role(state, "fix") < int(state.get("max_fix") or MAX_VERIFIERS):
+        pending_fix = list(state.get("pending_fix") or [])
+        if not pending_fix:
+            break
+        repo = pending_fix.pop(0)
+        state["pending_fix"] = pending_fix
+        if any(row.get("repo") == repo and row.get("role") == "fix" for row in state.get("in_flight") or []):
+            continue
+        spawn.append(_reserve(state, repo, "fix", now_ts))
+
     live_ids = [str(row["agent_id"]) for row in (state.get("in_flight") or []) if row.get("agent_id")]
     accounted = _accounted(state)
     requested = list(state.get("requested") or [])
-    walk_complete = bool(requested) and all(r in accounted for r in requested)
+    fix_open = bool(state.get("pending_fix")) or any(
+        row.get("role") == "fix" for row in (state.get("in_flight") or [])
+    )
+    walk_complete = bool(requested) and all(r in accounted for r in requested) and not fix_open
     if not requested:
-        walk_complete = not (state.get("queue") or state.get("in_flight") or state.get("pending_verify"))
+        walk_complete = not (
+            state.get("queue")
+            or state.get("in_flight")
+            or state.get("pending_verify")
+            or state.get("pending_fix")
+        )
 
     collect: List[str] = []
     for row in state.get("in_flight") or []:

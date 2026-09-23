@@ -8,6 +8,7 @@ from datetime import date
 from typing import List, Optional, Sequence, Tuple
 
 from .catalog import Catalog, ExcludedRepo, draft_in_scope, with_added
+from .walks import match_walk
 from .github import RemoteRepo
 
 
@@ -79,6 +80,7 @@ def adopt_new(
             name,
             clone_root=clone_root,
             notes="adopted {0} from gh; exclude with a reason if this is not a product".format(day),
+            walk=match_walk(name, catalog.walks),
         )
         new_scope.append(item)
         added_ids.append(item.id)

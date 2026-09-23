@@ -54,9 +54,12 @@ The **audit walk** is always read-only. Never `reset --hard`, never merge, never
 - `--from <ver>`: prior generation. Default: last completed run's `--to`, else `4.5`.
 - `--to <ver>`: current session model family.
 - `--only <id>`: one catalog id (repeatable).
+- `--all`: ignore `queue.json` and walk every in-scope catalog id.
 - `--resume`: continue today's run dir if it exists.
 - `--mode audit|fix|pr`: override saved action mode for this run only.
 - `--kill none|stall`: override saved child-kill policy for this run only.
+
+If `$ROOT/queue.json` is present, `init-run` walks those ids when `--only` and `--all` are omitted. A missing file still walks the whole in-scope catalog.
 
 ## Procedure
 
@@ -73,7 +76,7 @@ If catalog `owner` is empty, the CLI uses the logged-in `gh` user. New owned non
 2. **Init run dir**
 
 ```bash
-upgrade-audit init-run --from <from> --to <to> [--resume] [--only <id> ...]
+upgrade-audit init-run --from <from> --to <to> [--resume] [--only <id> ...]   # or --all
 ```
 
 Move the inventory JSON to `<run>/inventory.json`.
@@ -98,4 +101,4 @@ Do not redo `repos/*.json` already in the run dir.
 
 ## Defaults
 
-PDF body cap: 8 confirmed findings per repo.
+Fleet PDF body cap: 8 confirmed findings per repo. Full dump for one catalog id: `upgrade-audit repo-pdf --repo <id>` (critical, major, and minor; no cap). New TUI for a queued walk: `upgrade-audit send-grok --from <from> --to <to>`.
